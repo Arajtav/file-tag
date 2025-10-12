@@ -1,5 +1,7 @@
 mod app;
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::app::{App, MergeError, RemoveError, RenameError};
@@ -45,7 +47,19 @@ enum Commands {
         new_tag: Option<String>,
     },
     /// Lists all the tags.
-    Tags,
+    Tags { file: Option<PathBuf> },
+    /// Tags a file.
+    Tag {
+        file: PathBuf,
+        /// Tags to add, if no tags are provided the file entry is added anyways.
+        tags: Vec<String>,
+    },
+    /// Removes tags from a file.
+    Untag {
+        file: PathBuf,
+        /// Tags to remove, if no tags are provided the file entry is removed.
+        tags: Vec<String>,
+    },
 }
 
 fn main() {
@@ -110,12 +124,30 @@ fn main() {
                 }
             }
         }
-        Commands::Tags => {
-            let mut tags = db.tags();
+        Commands::Tags { file } => {
+            let mut tags = db.tags(
+                file.as_ref()
+                    .map(|p| p.canonicalize().unwrap())
+                    .as_ref()
+                    .map(|p| p.to_str().unwrap()),
+            );
             tags.sort_unstable();
             for tag in tags {
                 println!("{tag:?}")
             }
+        }
+        Commands::Tag { file, tags } => {
+            for tag in &tags {
+                verify_tag_name!(tag);
+            }
+
+            let (created, added) =
+                db.tag_entry(file.canonicalize().unwrap().to_str().unwrap(), &tags);
+            println!("{created} tags created, {added} tags added");
+        }
+        Commands::Untag { file, tags } => {
+            let removed = db.untag_entry(file.canonicalize().unwrap().to_str().unwrap(), &tags);
+            println!("{removed} tags removed");
         }
     }
 }
