@@ -11,10 +11,7 @@ fn validate_tag_name(tag: &str) -> bool {
         && !tag.starts_with("_")
         && !tag.ends_with("_")
         && !tag.contains("__")
-        && tag
-            .chars()
-            .enumerate()
-            .all(|(_, c)| c.is_ascii_lowercase() || c == '_')
+        && tag.chars().all(|c| c.is_ascii_lowercase() || c == '_')
 }
 
 macro_rules! verify_tag_name {

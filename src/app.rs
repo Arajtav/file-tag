@@ -182,19 +182,18 @@ impl App {
             App::count_uses(&tx, tag_b).ok_or(MergeError::TagBNotFound)?
         );
 
-        if let Some(new) = new {
-            if new != tag_a && new != tag_b {
-                if tx
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
-                        [new],
-                        |row| row.get(0),
-                    )
-                    .unwrap()
-                {
-                    return Err(MergeError::TagAlreadyExists);
-                }
-            }
+        if let Some(new) = new
+            && new != tag_a
+            && new != tag_b
+            && tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
+                    [new],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        {
+            return Err(MergeError::TagAlreadyExists);
         }
 
         if matches!(Confirm::new("Are you sure?").prompt(), Ok(false) | Err(_)) {
