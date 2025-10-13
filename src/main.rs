@@ -1,27 +1,13 @@
 mod app;
+mod errors;
+mod path;
+mod tag;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::exit};
 
 use clap::{Parser, Subcommand};
 
-use crate::app::{App, MergeError, RemoveError, RenameError};
-
-fn validate_tag_name(tag: &str) -> bool {
-    !tag.is_empty()
-        && !tag.starts_with("_")
-        && !tag.ends_with("_")
-        && !tag.contains("__")
-        && tag.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-}
-
-macro_rules! verify_tag_name {
-    ($tag:expr) => {{
-        if !validate_tag_name($tag) {
-            eprintln!("{:?} is not a valid tag name", $tag);
-            return;
-        }
-    }};
-}
+use crate::{app::App, errors::ProgramError, path::resolve_path, tag::Tag};
 
 #[derive(Parser)]
 struct Cli {
@@ -32,16 +18,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Creates a new tag.
-    Create { tag: String },
+    Create { tag: Tag },
     /// Removes a tag.
-    Remove { tag: String },
+    Remove { tag: Tag },
     /// Changes the name of a tag.
-    Rename { old_tag: String, new_tag: String },
+    Rename { old_tag: Tag, new_tag: Tag },
     /// Merges 2 tags, optionally saving the result under a new name.
     Merge {
-        tag_a: String,
-        tag_b: String,
-        new_tag: Option<String>,
+        tag_a: Tag,
+        tag_b: Tag,
+        new_tag: Option<Tag>,
     },
     /// Lists all the tags.
     Tags { file: Option<PathBuf> },
@@ -49,102 +35,68 @@ enum Commands {
     Tag {
         file: PathBuf,
         /// Tags to add, if no tags are provided the file entry is added anyways.
-        tags: Vec<String>,
+        tags: Vec<Tag>,
     },
     /// Removes tags from a file.
     Untag {
         file: PathBuf,
         /// Tags to remove, if no tags are provided the file entry is removed.
-        tags: Vec<String>,
+        tags: Vec<Tag>,
     },
 }
 
-fn main() {
+fn run() -> Result<(), ProgramError> {
     let args = Cli::parse();
-    let mut db = App::new();
+    let mut db = App::new()?;
     match args.command {
         Commands::Create { tag } => {
-            verify_tag_name!(&tag);
-            if db.create_tag(&tag) {
-                println!("Successfully created {tag:?}")
-            } else {
-                eprintln!("{tag:?} already exists");
-            }
+            db.create_tag(&tag)?;
+            println!("Created tag {tag}");
         }
-        Commands::Remove { tag } => match db.remove_tag(&tag) {
-            Ok(_) => {
-                println!("Removed {tag:?}")
-            }
-            Err(RemoveError::TagNotFound) => {
-                eprintln!("{tag:?} doesn't exist");
-            }
-            Err(RemoveError::Canceled) => {}
-        },
+        Commands::Remove { tag } => {
+            db.remove_tag(&tag)?;
+            println!("Removed tag {tag}");
+        }
         Commands::Rename { old_tag, new_tag } => {
-            verify_tag_name!(&new_tag);
-            match db.rename_tag(&old_tag, &new_tag) {
-                Ok(_) | Err(RenameError::Canceled) => {}
-                Err(RenameError::TagNotFound) => {
-                    eprintln!("{old_tag:?} doesn't exist");
-                }
-                Err(RenameError::TagAlreadyExists) => {
-                    eprintln!(
-                        "{new_tag:?} already exists, if you want to merge them use the `merge` command"
-                    );
-                }
-            }
+            db.rename_tag(&old_tag, &new_tag)?;
+            println!("Renamed {old_tag} to {new_tag}");
         }
         Commands::Merge {
             tag_a,
             tag_b,
             new_tag,
         } => {
-            if let Some(new_tag) = &new_tag {
-                verify_tag_name!(new_tag);
-            }
-            match db.merge_tags(&tag_a, &tag_b, &new_tag) {
-                Ok(_) | Err(MergeError::Canceled) => {}
-                Err(MergeError::TagANotFound) => {
-                    eprintln!("{tag_a:?} doesn't exist");
-                }
-                Err(MergeError::TagBNotFound) => {
-                    eprintln!("{tag_b:?} doesn't exist");
-                }
-                Err(MergeError::TagAlreadyExists) => {
-                    eprintln!(
-                        "{:?} already exists, if you want to merge them use the `merge` command",
-                        new_tag.unwrap()
-                    );
-                }
-                Err(MergeError::SelfMerge) => {
-                    eprintln!("Cannot merge {tag_a:?} with itself")
-                }
-            }
+            db.merge_tags(&tag_a, &tag_b, new_tag.as_ref())?;
+            println!(
+                "merged {tag_a} with {tag_b} (saved under {})",
+                new_tag.as_ref().unwrap_or(&tag_a)
+            );
         }
         Commands::Tags { file } => {
-            let mut tags = db.tags(
-                file.as_ref()
-                    .map(|p| p.canonicalize().unwrap())
-                    .as_ref()
-                    .map(|p| p.to_str().unwrap()),
-            );
+            let mut tags = db.tags(file.map(resolve_path).transpose()?.as_deref())?;
             tags.sort_unstable();
             for tag in tags {
-                println!("{tag:?}")
+                println!("{tag}")
             }
         }
         Commands::Tag { file, tags } => {
-            for tag in &tags {
-                verify_tag_name!(tag);
-            }
-
-            let (created, added) =
-                db.tag_entry(file.canonicalize().unwrap().to_str().unwrap(), &tags);
+            let (created, added) = db.tag_entry(&resolve_path(file)?, &tags)?;
             println!("{created} tags created, {added} tags added");
         }
         Commands::Untag { file, tags } => {
-            let removed = db.untag_entry(file.canonicalize().unwrap().to_str().unwrap(), &tags);
+            let removed = db.untag_entry(&resolve_path(file)?, &tags)?;
             println!("{removed} tags removed");
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        if let ProgramError::UserCanceled = err {
+        } else {
+            eprintln!("{err}");
+            exit(1)
         }
     }
 }
