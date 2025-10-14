@@ -1,5 +1,6 @@
 mod app;
 mod errors;
+mod finder;
 mod path;
 mod query_tag;
 mod tag;
@@ -8,7 +9,10 @@ use std::{path::PathBuf, process::exit};
 
 use clap::{Parser, Subcommand};
 
-use crate::{app::App, errors::ProgramError, path::resolve_path, query_tag::QueryTag, tag::Tag};
+use crate::{
+    app::App, errors::ProgramError, finder::find_db, path::resolve_path, query_tag::QueryTag,
+    tag::Tag,
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -46,12 +50,22 @@ enum Commands {
     },
     /// Queries the database.
     Query { query_tags: Vec<QueryTag> },
+    /// Creates a new local database.
+    InitLocal,
 }
 
 fn run() -> Result<(), ProgramError> {
     let args = Cli::parse();
-    let mut db = App::new()?;
+
+    // that split here is ugly, but otherwise that command could be blocked
+    // if it is not possible to create a global database.
+    if matches!(args.command, Commands::InitLocal) {
+        return App::new(&PathBuf::from("file-tag.sqlite")).map(|_| ());
+    }
+
+    let mut db = App::new(&find_db()?)?;
     match args.command {
+        Commands::InitLocal => unreachable!(),
         Commands::Create { tag } => {
             db.create_tag(&tag)?;
             println!("Created tag {tag}");

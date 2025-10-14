@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use inquire::Confirm;
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
@@ -8,8 +10,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Result<Self, ProgramError> {
-        let conn = Connection::open("file-tag.sqlite").map_err(ProgramError::RusqliteError)?;
+    pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
+        let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
 
         conn.execute_batch(
             r#"

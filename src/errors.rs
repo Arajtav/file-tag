@@ -18,4 +18,6 @@ pub enum ProgramError {
     SelfMerge(Tag),
     #[error("failed to resolve path {0}")]
     InvalidPath(std::path::PathBuf),
+    #[error("failed to get the database")]
+    NoDB,
 }
