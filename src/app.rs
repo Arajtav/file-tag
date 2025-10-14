@@ -277,4 +277,37 @@ impl App {
         tx.commit().map_err(ProgramError::RusqliteError)?;
         Ok(removed)
     }
+
+    pub fn query(&self, required: &[Tag], forbidden: &[Tag]) -> Result<Vec<String>, ProgramError> {
+        let mut sql = "SELECT entry FROM entry_tags".to_owned();
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+
+        let mut conditions = Vec::new();
+
+        if !forbidden.is_empty() {
+            conditions.push(format!(
+                "tag NOT IN ({})",
+                vec!["?"; forbidden.len()].join(",")
+            ));
+            params.extend(forbidden.iter().map(|t| t as &dyn rusqlite::ToSql));
+        }
+
+        if !required.is_empty() {
+            conditions.push(format!("tag IN ({})", vec!["?"; required.len()].join(",")));
+            params.extend(required.iter().map(|t| t as &dyn rusqlite::ToSql));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        self.conn
+            .prepare(&sql)
+            .map_err(ProgramError::RusqliteError)?
+            .query_map(params.as_slice(), |row| row.get(0))
+            .map_err(ProgramError::RusqliteError)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)
+    }
 }

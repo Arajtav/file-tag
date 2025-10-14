@@ -1,13 +1,14 @@
 mod app;
 mod errors;
 mod path;
+mod query_tag;
 mod tag;
 
 use std::{path::PathBuf, process::exit};
 
 use clap::{Parser, Subcommand};
 
-use crate::{app::App, errors::ProgramError, path::resolve_path, tag::Tag};
+use crate::{app::App, errors::ProgramError, path::resolve_path, query_tag::QueryTag, tag::Tag};
 
 #[derive(Parser)]
 struct Cli {
@@ -43,6 +44,8 @@ enum Commands {
         /// Tags to remove, if no tags are provided the file entry is removed.
         tags: Vec<Tag>,
     },
+    /// Queries the database.
+    Query { query_tags: Vec<QueryTag> },
 }
 
 fn run() -> Result<(), ProgramError> {
@@ -86,6 +89,22 @@ fn run() -> Result<(), ProgramError> {
         Commands::Untag { file, tags } => {
             let removed = db.untag_entry(&resolve_path(file)?, &tags)?;
             println!("{removed} tags removed");
+        }
+        Commands::Query { query_tags } => {
+            let mut required = Vec::new();
+            let mut forbidden = Vec::new();
+            for tag in query_tags {
+                match tag {
+                    QueryTag::Required(tag) => required.push(tag),
+                    QueryTag::Forbidden(tag) => forbidden.push(tag),
+                }
+            }
+
+            let mut results = db.query(&required, &forbidden)?;
+            results.sort_unstable();
+            for tag in results {
+                println!("{tag}")
+            }
         }
     }
     Ok(())
