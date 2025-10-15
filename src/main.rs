@@ -22,36 +22,81 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Creates a new tag.
-    Create { tag: Tag },
-    /// Removes a tag.
-    Remove { tag: Tag },
+    /// Creates a new tag, or makes sure a tag exists.
+    Create {
+        /// Tag to create.
+        tag: Tag,
+    },
+    /// Removes a tag and all references to it.
+    Remove {
+        /// Tag to remove.
+        tag: Tag,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Changes the name of a tag.
-    Rename { old_tag: Tag, new_tag: Tag },
-    /// Merges 2 tags, optionally saving the result under a new name.
+    Rename {
+        /// Tag to rename.
+        old_tag: Tag,
+        /// New name.
+        new_tag: Tag,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Merges 2 tags.
     Merge {
+        /// First tag.
         tag_a: Tag,
+        /// Second tag.
         tag_b: Tag,
+        /// Optionally a name under which the merged tag should
+        /// be saved (uses the name of the first tag otherwise).
         new_tag: Option<Tag>,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Lists all the tags.
-    Tags { file: Option<PathBuf> },
+    Tags {
+        /// Optionally file from which the tags will be listed.
+        file: Option<PathBuf>,
+    },
     /// Tags a file.
     Tag {
+        /// File to tag.
         file: PathBuf,
-        /// Tags to add, if no tags are provided the file entry is added anyways.
+        /// Tags to add.
+        /// If no tags are provided, the file is added to tracking anyways.
         tags: Vec<Tag>,
     },
     /// Removes tags from a file.
     Untag {
+        /// File to untag.
         file: PathBuf,
-        /// Tags to remove, if no tags are provided the file entry is removed.
+        /// Tags to remove, if no tags are provided, all tags are removed,
+        /// and the file is removed from tracking.
         tags: Vec<Tag>,
     },
     /// Queries the database.
-    Query { query_tags: Vec<QueryTag> },
-    /// Creates a new local database.
+    Query {
+        /// Query tags.
+        query_tags: Vec<QueryTag>,
+    },
+    /// Creates a new local database. Does nothing if the database exists already.
     InitLocal,
+}
+
+fn confirm() -> bool {
+    matches!(inquire::Confirm::new("Are you sure?").prompt(), Ok(true))
+}
+
+fn always_confirm() -> bool {
+    true
 }
 
 fn run() -> Result<(), ProgramError> {
@@ -70,20 +115,34 @@ fn run() -> Result<(), ProgramError> {
             db.create_tag(&tag)?;
             println!("Created tag {tag}");
         }
-        Commands::Remove { tag } => {
-            db.remove_tag(&tag)?;
+        Commands::Remove { tag, yes } => {
+            db.remove_tag(&tag, if yes { always_confirm } else { confirm })?;
             println!("Removed tag {tag}");
         }
-        Commands::Rename { old_tag, new_tag } => {
-            db.rename_tag(&old_tag, &new_tag)?;
+        Commands::Rename {
+            old_tag,
+            new_tag,
+            yes,
+        } => {
+            db.rename_tag(
+                &old_tag,
+                &new_tag,
+                if yes { always_confirm } else { confirm },
+            )?;
             println!("Renamed {old_tag} to {new_tag}");
         }
         Commands::Merge {
             tag_a,
             tag_b,
             new_tag,
+            yes,
         } => {
-            db.merge_tags(&tag_a, &tag_b, new_tag.as_ref())?;
+            db.merge_tags(
+                &tag_a,
+                &tag_b,
+                new_tag.as_ref(),
+                if yes { always_confirm } else { confirm },
+            )?;
             println!(
                 "merged {tag_a} with {tag_b} (saved under {})",
                 new_tag.as_ref().unwrap_or(&tag_a)

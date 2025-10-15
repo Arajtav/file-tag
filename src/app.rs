@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use inquire::Confirm;
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::{errors::ProgramError, tag::Tag};
@@ -8,6 +7,8 @@ use crate::{errors::ProgramError, tag::Tag};
 pub struct App {
     conn: Connection,
 }
+
+pub type Confirm = fn() -> bool;
 
 impl App {
     pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
@@ -73,7 +74,7 @@ impl App {
     }
 
     /// Removes an existing tag.
-    pub fn remove_tag(&mut self, tag: &Tag) -> Result<(), ProgramError> {
+    pub fn remove_tag(&mut self, tag: &Tag, confirm: Confirm) -> Result<(), ProgramError> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -84,7 +85,7 @@ impl App {
             App::count_uses(&tx, tag)?
         );
 
-        if matches!(Confirm::new("Are you sure?").prompt(), Ok(false) | Err(_)) {
+        if !confirm() {
             return Err(ProgramError::UserCanceled);
         }
 
@@ -96,7 +97,12 @@ impl App {
     }
 
     /// Renames a tag.
-    pub fn rename_tag(&mut self, old: &Tag, new: &Tag) -> Result<(), ProgramError> {
+    pub fn rename_tag(
+        &mut self,
+        old: &Tag,
+        new: &Tag,
+        confirm: Confirm,
+    ) -> Result<(), ProgramError> {
         if old == new {
             return Ok(());
         }
@@ -128,7 +134,7 @@ impl App {
             return Err(ProgramError::TagNotFound(new.to_owned()));
         }
 
-        if matches!(Confirm::new("Are you sure?").prompt(), Ok(false) | Err(_)) {
+        if !confirm() {
             return Err(ProgramError::UserCanceled);
         }
 
@@ -146,6 +152,7 @@ impl App {
         tag_a: &Tag,
         tag_b: &Tag,
         new: Option<&Tag>,
+        confirm: Confirm,
     ) -> Result<(), ProgramError> {
         if tag_a == tag_b {
             return Err(ProgramError::SelfMerge(tag_a.to_owned()));
@@ -180,7 +187,7 @@ impl App {
             return Err(ProgramError::TagExists(new.to_owned()));
         }
 
-        if matches!(Confirm::new("Are you sure?").prompt(), Ok(false) | Err(_)) {
+        if !confirm() {
             return Err(ProgramError::UserCanceled);
         }
 
