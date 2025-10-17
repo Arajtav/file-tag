@@ -288,26 +288,30 @@ impl App {
     }
 
     pub fn query(&self, required: &[Tag], forbidden: &[Tag]) -> Result<Vec<String>, ProgramError> {
-        let mut sql = "SELECT entry FROM entry_tags".to_owned();
+        let mut sql = "SELECT entry FROM entry_tags GROUP BY entry".to_owned();
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
 
         let mut conditions = Vec::new();
 
         if !forbidden.is_empty() {
             conditions.push(format!(
-                "tag NOT IN ({})",
+                "SUM(CASE WHEN tag IN ({}) THEN 1 ELSE 0 END) = 0",
                 vec!["?"; forbidden.len()].join(",")
             ));
             params.extend(forbidden.iter().map(|t| t as &dyn rusqlite::ToSql));
         }
 
         if !required.is_empty() {
-            conditions.push(format!("tag IN ({})", vec!["?"; required.len()].join(",")));
+            conditions.push(format!(
+                "COUNT(DISTINCT CASE WHEN tag IN ({}) THEN tag END) = {}",
+                vec!["?"; required.len()].join(","),
+                required.len()
+            ));
             params.extend(required.iter().map(|t| t as &dyn rusqlite::ToSql));
         }
 
         if !conditions.is_empty() {
-            sql.push_str(" WHERE ");
+            sql.push_str(" HAVING ");
             sql.push_str(&conditions.join(" AND "));
         }
 
