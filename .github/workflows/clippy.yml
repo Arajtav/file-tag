@@ -1,0 +1,15 @@
+on: push
+name: Cargo clippy check
+
+jobs:
+    cargo_clippy_check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  shared-key: "rust-ci-cache"
+
+            - name: Run Cargo Clippy
+              run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic

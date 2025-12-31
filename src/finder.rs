@@ -16,17 +16,16 @@ pub fn find_user_state_dir() -> Option<PathBuf> {
 }
 
 pub fn find_db() -> Result<PathBuf, ProgramError> {
-    match std::env::current_dir()
+    if let Some(db) = std::env::current_dir()
         .expect("Failed to get cwd") // not ProgramError
         .ancestors()
         .map(|p| p.join("file-tag.sqlite"))
         .find(|p| p.exists())
     {
-        Some(db) => Ok(db),
-        None => {
-            let mut db = find_user_state_dir().ok_or(ProgramError::NoDB)?;
-            db.push("db.sqlite");
-            Ok(db)
-        }
+        Ok(db)
+    } else {
+        let mut db = find_user_state_dir().ok_or(ProgramError::NoDB)?;
+        db.push("db.sqlite");
+        Ok(db)
     }
 }

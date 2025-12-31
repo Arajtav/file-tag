@@ -152,7 +152,7 @@ fn run() -> Result<(), ProgramError> {
             let mut tags = db.tags(file.map(resolve_path).transpose()?.as_deref())?;
             tags.sort_unstable();
             for tag in tags {
-                println!("{tag}")
+                println!("{tag}");
             }
         }
         Commands::Tag { file, tags } => {
@@ -176,7 +176,7 @@ fn run() -> Result<(), ProgramError> {
             let mut results = db.query(&required, &forbidden)?;
             results.sort_unstable();
             for tag in results {
-                println!("{tag}")
+                println!("{tag}");
             }
         }
     }

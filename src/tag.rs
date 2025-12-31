@@ -23,7 +23,7 @@ impl Tag {
         let mut acc = String::with_capacity(original.len());
         for mut char in original.to_lowercase().chars() {
             if char == ' ' {
-                char = '_'
+                char = '_';
             }
 
             if !(char.is_ascii_alphanumeric()

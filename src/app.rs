@@ -15,7 +15,7 @@ impl App {
         let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
 
         conn.execute_batch(
-            r#"
+            r"
             PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS tags (
@@ -37,7 +37,7 @@ impl App {
                     ON UPDATE CASCADE,
                 PRIMARY KEY(entry, tag)
             );
-            "#,
+            ",
         )
         .map_err(ProgramError::RusqliteError)?;
         Ok(App { conn })
@@ -146,7 +146,7 @@ impl App {
     }
 
     /// Merges 2 tags.
-    /// If `new` is `None`, the result is saved under the name of tag_a.
+    /// If `new` is `None`, the result is saved under the name of `tag_a`.
     pub fn merge_tags(
         &mut self,
         tag_a: &Tag,

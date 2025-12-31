@@ -6,7 +6,7 @@ pub fn resolve_path(path: PathBuf) -> Result<String, ProgramError> {
     if let Ok(canonical) = path.canonicalize() {
         return canonical
             .to_str()
-            .map(|s| s.to_owned())
+            .map(std::borrow::ToOwned::to_owned)
             .ok_or(ProgramError::InvalidPath(path));
     }
 
@@ -15,7 +15,7 @@ pub fn resolve_path(path: PathBuf) -> Result<String, ProgramError> {
     if let Ok(absolute) = absolute(&path) {
         return absolute
             .to_str()
-            .map(|s| s.to_owned())
+            .map(std::borrow::ToOwned::to_owned)
             .ok_or(ProgramError::InvalidPath(path));
     }
 

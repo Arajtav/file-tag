@@ -1,0 +1,11 @@
+on: push
+name: Cargo fmt check
+
+jobs:
+    cargo_fmt_check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Run cargo fmt
+              run: cargo fmt --all --check
