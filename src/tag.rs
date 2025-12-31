@@ -4,21 +4,26 @@ use rusqlite::{ToSql, types::ToSqlOutput};
 
 use crate::errors::ProgramError;
 
+/// `Tag` type.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Tag(String);
 
 impl Tag {
+    /// Tries to create a new tag and normalize it.
+    ///
+    /// Tags must be made only out of ascii letters, digits, hyphens, underscores and round brackets.
+    /// All hyphens must be directly preceded and followed by letters and/or digits.
+    ///
+    /// Normalization steps are:
+    /// - convert everything to lowercase.
+    /// - convert all spaces into underscores.
+    /// - remove leading and ending underscores (space).
+    /// - collapse multiple underscores into one.
+    ///
+    /// After the normalization, the tag is rejected if:
+    /// - it's empty.
+    /// - it begins with anything other than a letter.
     pub fn new(original: &str) -> Result<Self, ProgramError> {
-        /*
-         * make lowercase.
-         * spaces are converted to underscores.
-         * must start with a letter.
-         * only ascii letters, digits, hyphens, underscores, and normal brackets are allowed.
-         * hyphens must be surrounded by letters or digits.
-         * multiple consecutive underscores (spaces) are collapsed into one.
-         * result is trimmed from underscores (spaces).
-         * result cannot be empty.
-         */
         let mut last = '_'; // thanks to this, there is no need to check for leading underscores or hyphens.
         let mut acc = String::with_capacity(original.len());
         for mut char in original.to_lowercase().chars() {

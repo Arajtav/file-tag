@@ -4,13 +4,19 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::{errors::ProgramError, tag::Tag};
 
+/// App struct.
+/// Encapsulates all the backend logic.
 pub struct App {
+    /// Database connection.
     conn: Connection,
 }
 
+/// A function to call to get user confirmation if needed.
 pub type Confirm = fn() -> bool;
 
 impl App {
+    /// Opens a database connection from `db_path`.
+    /// Creates and initializes a new database if needed.
     pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
         let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
 
@@ -43,6 +49,7 @@ impl App {
         Ok(App { conn })
     }
 
+    /// Counts how many files is the `tag` on.
     fn count_uses(tx: &Transaction, tag: &Tag) -> Result<usize, ProgramError> {
         let tag_exists: bool = tx
             .prepare("SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)")
@@ -231,7 +238,8 @@ impl App {
         })
     }
 
-    // Tags an entry, returns (number of tags created, number of tags added).
+    /// Tags an entry, returns (number of tags created, number of tags added).
+    /// Creates a new entry if need.
     pub fn tag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<(usize, usize), ProgramError> {
         let tx = self
             .conn
@@ -259,8 +267,8 @@ impl App {
         Ok((created, added))
     }
 
-    // Removes tags from an entry (or removes the entry if `tags` is empty).
-    // Returns the number of tags removed.
+    /// Removes tags from an entry, returns the number of tags removed.
+    /// Removes the entry if the `tags` is empty.
     pub fn untag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<usize, ProgramError> {
         let tx = self
             .conn
@@ -287,6 +295,7 @@ impl App {
         Ok(removed)
     }
 
+    /// Returns all entries with `required` tags, excluding those with `forbidden` tags.
     pub fn query(&self, required: &[Tag], forbidden: &[Tag]) -> Result<Vec<String>, ProgramError> {
         let mut sql = "SELECT entry FROM entry_tags GROUP BY entry".to_owned();
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();

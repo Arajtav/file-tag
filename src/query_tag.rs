@@ -2,9 +2,12 @@ use std::str::FromStr;
 
 use crate::{errors::ProgramError, tag::Tag};
 
+/// `QueryTag` type mainly to deserialize the query.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum QueryTag {
+    /// Tag to be searched for.
     Required(Tag),
+    /// Tag to be excluded from the result.
     Forbidden(Tag),
 }
 

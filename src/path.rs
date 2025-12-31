@@ -2,6 +2,7 @@ use std::path::{PathBuf, absolute};
 
 use crate::errors::ProgramError;
 
+/// Tries to resolve a path, canonicalize, etc.
 pub fn resolve_path(path: PathBuf) -> Result<String, ProgramError> {
     if let Ok(canonical) = path.canonicalize() {
         return canonical

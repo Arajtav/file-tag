@@ -4,6 +4,7 @@ use directories::ProjectDirs;
 
 use crate::errors::ProgramError;
 
+/// Tries to find user's state dir.
 pub fn find_user_state_dir() -> Option<PathBuf> {
     let project = ProjectDirs::from("com", "arajtav", "file-tag")?;
     let state = project
@@ -15,6 +16,7 @@ pub fn find_user_state_dir() -> Option<PathBuf> {
     Some(state.to_owned())
 }
 
+/// Tries to find a database to use.
 pub fn find_db() -> Result<PathBuf, ProgramError> {
     if let Some(db) = std::env::current_dir()
         .expect("Failed to get cwd") // not ProgramError
