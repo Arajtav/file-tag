@@ -1,7 +1,9 @@
 [package]
 name = "file-tag"
-version = "0.1.0"
+publish = false
 edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Arajtav/file-tag"
 
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
