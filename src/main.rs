@@ -97,6 +97,8 @@ enum Commands {
     Database,
     /// Lists files from the current directory that are not in the database. Symlinks are ignored.
     Untagged,
+    /// Prints the database stats, like the number of files, tags, etc.
+    Stats,
 }
 
 fn confirm() -> bool {
@@ -204,6 +206,11 @@ fn run() -> Result<(), ProgramError> {
                     println!("{file}");
                 }
             }
+        }
+        Commands::Stats => {
+            let (entries, tags) = db.stats()?;
+            println!("number of entries: {entries}");
+            println!("number of tags: {tags}");
         }
     }
     Ok(())

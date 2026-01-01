@@ -346,4 +346,23 @@ impl App {
             .collect::<Result<Vec<_>, _>>()
             .map_err(ProgramError::RusqliteError)
     }
+
+    /// Returns (number of entries, number of tags)
+    pub fn stats(&self) -> Result<(usize, usize), ProgramError> {
+        let entries = self
+            .conn
+            .prepare("SELECT count(1) FROM entries")
+            .map_err(ProgramError::RusqliteError)?
+            .query_one([], |row| row.get(0))
+            .map_err(ProgramError::RusqliteError)?;
+
+        let tags = self
+            .conn
+            .prepare("SELECT count(1) FROM tags")
+            .map_err(ProgramError::RusqliteError)?
+            .query_one([], |row| row.get(0))
+            .map_err(ProgramError::RusqliteError)?;
+
+        Ok((entries, tags))
+    }
 }
