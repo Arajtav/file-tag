@@ -89,6 +89,8 @@ enum Commands {
     },
     /// Creates a new local database. Does nothing if the database exists already.
     InitLocal,
+    /// Prints the location of the database that will be used.
+    Database,
 }
 
 fn confirm() -> bool {
@@ -108,9 +110,16 @@ fn run() -> Result<(), ProgramError> {
         return App::new(&PathBuf::from("file-tag.sqlite")).map(|_| ());
     }
 
-    let mut db = App::new(&find_db()?)?;
+    let db = find_db()?;
+
+    if matches!(args.command, Commands::Database) {
+        println!("{}", db.display());
+        return Ok(());
+    }
+
+    let mut db = App::new(&db)?;
     match args.command {
-        Commands::InitLocal => unreachable!(),
+        Commands::InitLocal | Commands::Database => unreachable!(),
         Commands::Create { tag } => {
             db.create_tag(&tag)?;
             println!("Created tag {tag}");
