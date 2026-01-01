@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::{errors::ProgramError, tag::Tag};
 
@@ -236,6 +236,18 @@ impl App {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(ProgramError::RusqliteError)?,
         })
+    }
+
+    /// Returns whether the file is in the database.
+    pub fn is_in_db(&self, path: &str) -> Result<bool, ProgramError> {
+        Ok(self
+            .conn
+            .prepare("SELECT 1 FROM entries WHERE path = ?1")
+            .map_err(ProgramError::RusqliteError)?
+            .query_row([path], |_| Ok(()))
+            .optional()
+            .map_err(ProgramError::RusqliteError)?
+            .is_some())
     }
 
     /// Tags an entry, returns (number of tags created, number of tags added).

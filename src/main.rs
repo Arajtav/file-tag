@@ -10,7 +10,11 @@ use std::{path::PathBuf, process::exit};
 use clap::{Parser, Subcommand};
 
 use crate::{
-    app::App, errors::ProgramError, finder::find_db, path::resolve_path, query_tag::QueryTag,
+    app::App,
+    errors::ProgramError,
+    finder::{FileScanner, find_db},
+    path::resolve_path,
+    query_tag::QueryTag,
     tag::Tag,
 };
 
@@ -91,6 +95,8 @@ enum Commands {
     InitLocal,
     /// Prints the location of the database that will be used.
     Database,
+    /// Lists files from the current directory that are not in the database. Symlinks are ignored.
+    Untagged,
 }
 
 fn confirm() -> bool {
@@ -186,6 +192,17 @@ fn run() -> Result<(), ProgramError> {
             results.sort_unstable();
             for tag in results {
                 println!("{tag}");
+            }
+        }
+        Commands::Untagged => {
+            let fs = FileScanner::new(std::env::current_dir().expect("Failed to get cwd"));
+            for file in fs {
+                let file =
+                    resolve_path(file.clone()).unwrap_or(file.to_string_lossy().into_owned());
+
+                if !db.is_in_db(&file)? {
+                    println!("{file}");
+                }
             }
         }
     }
