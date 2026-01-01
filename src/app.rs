@@ -87,17 +87,28 @@ impl App {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(ProgramError::RusqliteError)?;
 
-        println!(
-            "{} files are tagged with that tag",
-            App::count_uses(&tx, tag)?
-        );
+        let files: Vec<String> = tx
+            .prepare("SELECT DISTINCT entry FROM entry_tags WHERE tag = ?1")
+            .map_err(ProgramError::RusqliteError)?
+            .query_map([tag], |row| row.get(0))
+            .map_err(ProgramError::RusqliteError)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)?;
 
-        if !confirm() {
-            return Err(ProgramError::UserCanceled);
+        if !files.is_empty() {
+            println!("{} files are tagged with that tag", files.len());
+
+            if !confirm() {
+                return Err(ProgramError::UserCanceled);
+            }
         }
 
         tx.execute("DELETE FROM tags WHERE name = ?1", [tag])
             .map_err(ProgramError::RusqliteError)?;
+        for file in files {
+            tx.execute("DELETE FROM entries WHERE path = ?1 AND NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry = ?1)", [file])
+                .map_err(ProgramError::RusqliteError)?;
+        }
 
         tx.commit().map_err(ProgramError::RusqliteError)?;
         Ok(())
@@ -253,6 +264,10 @@ impl App {
     /// Tags an entry, returns (number of tags created, number of tags added).
     /// Creates a new entry if need.
     pub fn tag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<(usize, usize), ProgramError> {
+        if tags.is_empty() {
+            return Ok((0, 0));
+        }
+
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -287,22 +302,28 @@ impl App {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(ProgramError::RusqliteError)?;
 
+        let num_tags: usize = tx
+            .query_one(
+                "SELECT count(1) FROM entry_tags WHERE entry = ?1",
+                [entry],
+                |row| row.get(0),
+            )
+            .map_err(ProgramError::RusqliteError)?;
+
         let mut removed = 0;
-        if tags.is_empty() {
+        for tag in tags {
             removed += tx
-                .execute("DELETE FROM entry_tags WHERE entry = ?1", [entry])
+                .execute(
+                    "DELETE FROM entry_tags WHERE entry = ?1 AND tag = ?2",
+                    (entry, tag),
+                )
                 .map_err(ProgramError::RusqliteError)?;
+        }
+
+        if tags.is_empty() || removed == num_tags {
             tx.execute("DELETE FROM entries WHERE path = ?1", [entry])
                 .map_err(ProgramError::RusqliteError)?;
-        } else {
-            for tag in tags {
-                removed += tx
-                    .execute(
-                        "DELETE FROM entry_tags WHERE entry = ?1 AND tag = ?2",
-                        (entry, tag),
-                    )
-                    .map_err(ProgramError::RusqliteError)?;
-            }
+            removed = num_tags;
         }
 
         tx.commit().map_err(ProgramError::RusqliteError)?;

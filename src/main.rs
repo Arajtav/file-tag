@@ -75,7 +75,6 @@ enum Commands {
         /// File to tag.
         file: PathBuf,
         /// Tags to add.
-        /// If no tags are provided, the file is added to tracking anyways.
         tags: Vec<Tag>,
     },
     /// Removes tags from a file.
