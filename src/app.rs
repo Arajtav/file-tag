@@ -280,6 +280,8 @@ impl App {
             removed += tx
                 .execute("DELETE FROM entry_tags WHERE entry = ?1", [entry])
                 .map_err(ProgramError::RusqliteError)?;
+            tx.execute("DELETE FROM entries WHERE path = ?1", [entry])
+                .map_err(ProgramError::RusqliteError)?;
         } else {
             for tag in tags {
                 removed += tx
