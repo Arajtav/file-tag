@@ -98,6 +98,18 @@ enum Commands {
     Untagged,
     /// Prints the database stats, like the number of files, tags, etc.
     Stats,
+    /// Tags every file in a directory, works recursively.
+    DirTag {
+        /// Directory to scan.
+        dir: PathBuf,
+
+        /// Tags to add.
+        tags: Vec<Tag>,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 fn confirm() -> bool {
@@ -108,6 +120,7 @@ fn always_confirm() -> bool {
     true
 }
 
+#[allow(clippy::too_many_lines)]
 fn run() -> Result<(), ProgramError> {
     let args = Cli::parse();
 
@@ -210,6 +223,14 @@ fn run() -> Result<(), ProgramError> {
             let (entries, tags) = db.stats()?;
             println!("number of entries: {entries}");
             println!("number of tags: {tags}");
+        }
+        Commands::DirTag { dir, tags, yes } => {
+            let fs = FileScanner::new(dir);
+            db.tag_multiple(
+                fs.into_iter().filter_map(|f| resolve_path(f).ok()),
+                &tags,
+                if yes { always_confirm } else { confirm },
+            )?;
         }
     }
     Ok(())

@@ -386,4 +386,60 @@ impl App {
 
         Ok((entries, tags))
     }
+
+    /// Tags multiple files.
+    /// Returns (tags created, tags added, files tagged);
+    pub fn tag_multiple(
+        &mut self,
+        entries: impl Iterator<Item = String>,
+        tags: &[Tag],
+        confirm: Confirm,
+    ) -> Result<(usize, usize, usize), ProgramError> {
+        if tags.is_empty() {
+            return Ok((0, 0, 0));
+        }
+
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(ProgramError::RusqliteError)?;
+
+        let mut created = 0;
+        let mut added = 0;
+        let mut files = 0;
+        for tag in tags {
+            created += tx
+                .execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
+                .map_err(ProgramError::RusqliteError)?;
+        }
+
+        for entry in entries {
+            files += tx
+                .execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [&entry])
+                .map_err(ProgramError::RusqliteError)?;
+            for tag in tags {
+                added += tx
+                    .execute(
+                        "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
+                        (&entry, tag),
+                    )
+                    .map_err(ProgramError::RusqliteError)?;
+            }
+        }
+
+        if files == 0 {
+            return Ok((0, 0, 0));
+        }
+
+        println!("{created} tags will be created");
+        println!("{added} tags will be added");
+        println!("{files} files will be tagged");
+
+        if !confirm() {
+            return Err(ProgramError::UserCanceled);
+        }
+
+        tx.commit().map_err(ProgramError::RusqliteError)?;
+        Ok((created, added, files))
+    }
 }
