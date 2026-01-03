@@ -185,6 +185,12 @@ fn run() -> Result<(), ProgramError> {
             }
         }
         Commands::Tag { file, tags } => {
+            // if the file does not exist it will print that too.
+            if file.is_symlink() || !file.is_file() {
+                eprintln!("only files can be tagged");
+                return Ok(());
+            }
+
             let (created, added) = db.tag_entry(&resolve_path(file)?, &tags)?;
             println!("{created} tags created, {added} tags added");
         }
