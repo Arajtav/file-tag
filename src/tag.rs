@@ -90,23 +90,42 @@ where
     }
 }
 
-#[test]
-fn test_tag() {
-    assert_eq!(Tag::new("tag").unwrap(), "tag");
-    assert_eq!(Tag::new(" tag").unwrap(), "tag");
-    assert_eq!(Tag::new("tag ").unwrap(), "tag");
-    assert_eq!(Tag::new("__ tag ").unwrap(), "tag");
-    assert_eq!(Tag::new("ta g").unwrap(), "ta_g");
-    assert_eq!(Tag::new("Tag").unwrap(), "tag");
-    assert_eq!(Tag::new("tag-tag").unwrap(), "tag-tag");
-    assert_eq!(Tag::new("tag 4").unwrap(), "tag_4");
-    assert_eq!(Tag::new("tag (tag)").unwrap(), "tag_(tag)");
-    for tag in [
-        "", "_", "Ą", "ð", "(test", "234a", "-", "-tag", "tag--tag", "tag-", "tag_-t", "tag_-_2",
-    ] {
-        assert!(matches!(
-            Tag::new(tag).unwrap_err(),
-            ProgramError::InvalidTagName(_)
-        ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tag_stripping() {
+        assert!(matches!(Tag::new("tag"), Ok(Tag(s)) if s == "tag"));
+        assert!(matches!(Tag::new(" tag"), Ok(Tag(s)) if s == "tag"));
+        assert!(matches!(Tag::new("tag "), Ok(Tag(s)) if s == "tag"));
+        assert!(matches!(Tag::new("__ tag"), Ok(Tag(s)) if s == "tag"));
+        assert!(matches!(Tag::new("tag___  _tag"), Ok(Tag(s)) if s == "tag_tag"));
+    }
+
+    #[test]
+    fn test_tag_normalization() {
+        assert!(matches!(Tag::new("ta g"), Ok(Tag(s)) if s == "ta_g"));
+        assert!(matches!(Tag::new("Tag"), Ok(Tag(s)) if s == "tag"));
+    }
+
+    #[test]
+    fn test_tag_special() {
+        assert!(matches!(Tag::new("tag-tag"), Ok(Tag(s)) if s == "tag-tag"));
+        assert!(matches!(Tag::new("tag 4"), Ok(Tag(s)) if s == "tag_4"));
+        assert!(matches!(Tag::new("tag (tag)"), Ok(Tag(s)) if s == "tag_(tag)"));
+    }
+
+    #[test]
+    fn test_tag_invalid() {
+        for tag in [
+            "", "_", "Ą", "ð", "(test", "234a", "-", "-tag", "tag--tag", "tag-", "tag_-t",
+            "tag_-_2", "--tag",
+        ] {
+            assert!(matches!(
+                Tag::new(tag),
+                Err(ProgramError::InvalidTagName(_))
+            ));
+        }
     }
 }

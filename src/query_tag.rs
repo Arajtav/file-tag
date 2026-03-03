@@ -22,3 +22,36 @@ impl FromStr for QueryTag {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_required() {
+        assert!(matches!(QueryTag::from_str("tag"), Ok(QueryTag::Required(tag)) if tag == "tag"));
+        assert!(
+            matches!(QueryTag::from_str("tag-2"), Ok(QueryTag::Required(tag)) if tag == "tag-2")
+        );
+    }
+
+    #[test]
+    fn test_forbidden() {
+        assert!(matches!(QueryTag::from_str("-tag"), Ok(QueryTag::Forbidden(tag)) if tag == "tag"));
+        assert!(
+            matches!(QueryTag::from_str("-tag-2"), Ok(QueryTag::Forbidden(tag)) if tag == "tag-2")
+        );
+    }
+
+    #[test]
+    fn test_broken() {
+        assert!(matches!(
+            QueryTag::from_str("--tag"),
+            Err(ProgramError::InvalidTagName(_))
+        ));
+        assert!(matches!(
+            QueryTag::from_str("tag-"),
+            Err(ProgramError::InvalidTagName(_))
+        ));
+    }
+}
