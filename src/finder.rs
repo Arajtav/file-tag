@@ -86,3 +86,68 @@ impl Iterator for FileScanner {
         self.files.pop_front()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use assert_fs::{TempDir, prelude::*};
+
+    use super::*;
+
+    #[test]
+    fn test_scan_single_file() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.child("file.txt");
+        file.touch().unwrap();
+
+        let scanner = FileScanner::new(temp.path().to_path_buf());
+        let files: Vec<PathBuf> = scanner.collect();
+
+        assert_eq!(files, [file.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn test_scan_nested_directories() {
+        let temp = TempDir::new().unwrap();
+        let nested_dir = temp.child("nested");
+        let first_file = temp.child("0root.txt");
+        first_file.touch().unwrap();
+        nested_dir.create_dir_all().unwrap();
+        let second_file = nested_dir.child("1nested.txt");
+        second_file.touch().unwrap();
+
+        let scanner = FileScanner::new(temp.path().to_path_buf());
+        let mut files: Vec<PathBuf> = scanner.collect();
+        files.sort();
+
+        assert_eq!(
+            files,
+            [
+                first_file.path().to_path_buf(),
+                second_file.path().to_path_buf()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_scan_symlink_is_skipped() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.child("file.txt");
+        file.touch().unwrap();
+        let symlink = temp.child("link.txt");
+        symlink.symlink_to_file(&file).unwrap();
+
+        let scanner = FileScanner::new(temp.path().to_path_buf());
+        let files: Vec<PathBuf> = scanner.collect();
+
+        assert_eq!(files, [file.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn test_scan_empty_directory() {
+        let temp = TempDir::new().unwrap();
+        let scanner = FileScanner::new(temp.path().to_path_buf());
+        let files: Vec<PathBuf> = scanner.collect();
+
+        assert!(files.is_empty());
+    }
+}
