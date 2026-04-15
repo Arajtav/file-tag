@@ -15,11 +15,7 @@ pub struct App {
 pub type Confirm = fn() -> bool;
 
 impl App {
-    /// Opens a database connection from `db_path`.
-    /// Creates and initializes a new database if needed.
-    pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
-        let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
-
+    fn init_db(conn: &Connection) -> Result<(), ProgramError> {
         conn.execute_batch(
             r"
             PRAGMA foreign_keys = ON;
@@ -45,8 +41,23 @@ impl App {
             );
             ",
         )
-        .map_err(ProgramError::RusqliteError)?;
-        Ok(App { conn })
+        .map_err(ProgramError::RusqliteError)
+    }
+
+    /// Opens a database connection from `db_path`.
+    /// Creates and initializes a new database if needed.
+    pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
+        let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
+        Self::init_db(&conn)?;
+        Ok(Self { conn })
+    }
+
+    /// Opens a database connection in memory.
+    #[cfg(test)]
+    pub fn new_in_memory() -> Result<Self, ProgramError> {
+        let conn = Connection::open_in_memory().map_err(ProgramError::RusqliteError)?;
+        Self::init_db(&conn)?;
+        Ok(Self { conn })
     }
 
     /// Counts how many files is the `tag` on.
@@ -228,7 +239,7 @@ impl App {
     }
 
     /// Returns the list of tags.
-    pub fn tags(&self, entry: Option<&str>) -> Result<Vec<String>, ProgramError> {
+    pub fn tags(&self, entry: Option<&str>) -> Result<Vec<Tag>, ProgramError> {
         Ok(match entry {
             Some(entry) => self
                 .conn
@@ -247,6 +258,7 @@ impl App {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(ProgramError::RusqliteError)?,
         })
+        .map(|v| v.into_iter().map(Tag::new_unchecked).collect())
     }
 
     /// Returns whether the file is in the database.
@@ -441,5 +453,34 @@ impl App {
 
         tx.commit().map_err(ProgramError::RusqliteError)?;
         Ok((created, added, files))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tags() {
+        let tag1 = &Tag::new("music").unwrap();
+        let tag2 = &Tag::new("photo").unwrap();
+        let tag3 = &Tag::new("video").unwrap();
+
+        let mut app = App::new_in_memory().unwrap();
+        app.create_tag(tag1).unwrap();
+        assert_eq!(app.tags(None).unwrap(), [tag1]);
+        app.create_tag(tag2).unwrap();
+        assert_eq!(app.tags(None).unwrap(), [tag1, tag2]);
+        app.remove_tag(tag1, || true).unwrap();
+        assert_eq!(app.tags(None).unwrap(), [tag2]);
+        app.rename_tag(tag2, tag1, || true).unwrap();
+        assert_eq!(app.tags(None).unwrap(), [tag1]);
+        app.rename_tag(tag3, tag1, || true).unwrap_err();
+        app.create_tag(tag2).unwrap();
+        app.create_tag(tag3).unwrap();
+        assert_eq!(app.tags(None).unwrap(), [tag1, tag2, tag3]);
+        app.merge_tags(tag1, tag2, Some(tag3), || true).unwrap_err();
+        app.merge_tags(tag2, tag3, None, || true).unwrap();
+        app.merge_tags(tag1, tag2, Some(tag3), || true).unwrap();
     }
 }

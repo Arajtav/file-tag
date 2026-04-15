@@ -59,6 +59,10 @@ impl Tag {
             Err(ProgramError::InvalidTagName(original.to_owned()))
         }
     }
+
+    pub fn new_unchecked(s: String) -> Self {
+        Self(s)
+    }
 }
 
 impl FromStr for Tag {
@@ -78,6 +82,13 @@ impl ToSql for Tag {
 impl Display for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+// I am confused as to why I need to implement that as PartialEQ is derived.
+impl PartialEq<&Tag> for Tag {
+    fn eq(&self, other: &&Tag) -> bool {
+        self == *other
     }
 }
 
