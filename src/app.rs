@@ -221,7 +221,7 @@ impl App {
         }
 
         tx.execute(
-            "UPDATE entry_tags SET tag = ?1 WHERE tag = ?2",
+            "UPDATE OR IGNORE entry_tags SET tag = ?1 WHERE tag = ?2",
             [tag_a, tag_b],
         )
         .map_err(ProgramError::RusqliteError)?;
