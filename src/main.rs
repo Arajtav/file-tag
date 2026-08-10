@@ -94,6 +94,8 @@ enum Commands {
     InitLocal,
     /// Prints the location of the database that will be used.
     Database,
+    /// Creates a copy of the database.
+    Backup,
     /// Lists files from the current directory that are not in the database. Symlinks are ignored.
     Untagged,
     /// Prints the database stats, like the number of files, tags, etc.
@@ -132,14 +134,37 @@ fn run() -> Result<(), ProgramError> {
 
     let db = find_db()?;
 
-    if matches!(args.command, Commands::Database) {
-        println!("{}", db.display());
-        return Ok(());
+    match args.command {
+        Commands::Database => {
+            println!("{}", db.display());
+            return Ok(());
+        }
+        Commands::Backup => {
+            if std::fs::exists(&db).is_ok_and(|a| a) {
+                let time = chrono::Utc::now();
+
+                let new = db.with_file_name(format!(
+                    "{}-{}.sqlite",
+                    db.file_stem().unwrap().to_string_lossy(),
+                    time.to_rfc3339()
+                ));
+
+                match std::fs::copy(db, &new) {
+                    Ok(_) => println!("Backup of the database created at {}", new.display()),
+                    Err(_) => eprintln!("Failed to create a backup"),
+                }
+            } else {
+                println!("No database exists yet to be backed up");
+            }
+
+            return Ok(());
+        }
+        _ => {}
     }
 
     let mut db = App::new(&db)?;
     match args.command {
-        Commands::InitLocal | Commands::Database => unreachable!(),
+        Commands::InitLocal | Commands::Database | Commands::Backup => unreachable!(),
         Commands::Create { tag } => {
             db.create_tag(&tag)?;
             println!("Created tag {tag}");
