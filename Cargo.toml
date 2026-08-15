@@ -18,3 +18,4 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 
 [dev-dependencies]
 assert_fs = "1.1.3"
+clap_complete = "4.6.9"
