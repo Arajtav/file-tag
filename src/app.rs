@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-use crate::{errors::ProgramError, tag::Tag};
+use crate::{errors::ProgramError, migrations::MIGRATIONS, tag::Tag};
 
 /// App struct.
 /// Encapsulates all the backend logic.
@@ -15,53 +15,33 @@ pub struct App {
 pub type Confirm = fn() -> bool;
 
 impl App {
-    fn init_db(conn: &Connection) -> Result<(), ProgramError> {
-        conn.execute_batch(
-            r"
-            PRAGMA foreign_keys = ON;
+    fn init_db(conn: &mut Connection) -> Result<(), ProgramError> {
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(ProgramError::RusqliteError)?;
 
-            CREATE TABLE IF NOT EXISTS tags (
-                name TEXT PRIMARY KEY
-            );
-
-            CREATE TABLE IF NOT EXISTS entries (
-                path TEXT PRIMARY KEY
-            );
-
-            CREATE TABLE IF NOT EXISTS entry_tags (
-                entry TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                FOREIGN KEY(entry) REFERENCES entries(path)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE,
-                FOREIGN KEY(tag) REFERENCES tags(name)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE,
-                PRIMARY KEY(entry, tag)
-            );
-            ",
-        )
-        .map_err(ProgramError::RusqliteError)
+        MIGRATIONS
+            .to_latest(conn)
+            .map_err(ProgramError::MigrationError)
     }
 
     /// Opens a database connection from `db_path`.
     /// Creates and initializes a new database if needed.
     pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
-        let conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
-        Self::init_db(&conn)?;
+        let mut conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
+        Self::init_db(&mut conn)?;
         Ok(Self { conn })
     }
 
     /// Opens a database connection in memory.
     #[cfg(test)]
     pub fn new_in_memory() -> Result<Self, ProgramError> {
-        let conn = Connection::open_in_memory().map_err(ProgramError::RusqliteError)?;
-        Self::init_db(&conn)?;
+        let mut conn = Connection::open_in_memory().map_err(ProgramError::RusqliteError)?;
+        Self::init_db(&mut conn)?;
         Ok(Self { conn })
     }
 
     /// Counts how many files is the `tag` on.
-    fn count_uses(tx: &Transaction, tag: &Tag) -> Result<usize, ProgramError> {
+    fn count_uses(tx: &Transaction, tag: &Tag) -> Result<i64, ProgramError> {
         let tag_exists: bool = tx
             .prepare("SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)")
             .map_err(ProgramError::RusqliteError)?
@@ -275,7 +255,7 @@ impl App {
 
     /// Tags an entry, returns (number of tags created, number of tags added).
     /// Creates a new entry if need.
-    pub fn tag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<(usize, usize), ProgramError> {
+    pub fn tag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<(i64, i64), ProgramError> {
         if tags.is_empty() {
             return Ok((0, 0));
         }
@@ -291,15 +271,19 @@ impl App {
         let mut created = 0;
         let mut added = 0;
         for tag in tags {
-            created += tx
-                .execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
-                .map_err(ProgramError::RusqliteError)?;
-            added += tx
-                .execute(
+            created += i64::try_from(
+                tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
+                    .map_err(ProgramError::RusqliteError)?,
+            )
+            .unwrap();
+            added += i64::try_from(
+                tx.execute(
                     "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
                     (entry, tag),
                 )
-                .map_err(ProgramError::RusqliteError)?;
+                .map_err(ProgramError::RusqliteError)?,
+            )
+            .unwrap();
         }
 
         tx.commit().map_err(ProgramError::RusqliteError)?;
@@ -308,13 +292,13 @@ impl App {
 
     /// Removes tags from an entry, returns the number of tags removed.
     /// Removes the entry if the `tags` is empty.
-    pub fn untag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<usize, ProgramError> {
+    pub fn untag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<i64, ProgramError> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(ProgramError::RusqliteError)?;
 
-        let num_tags: usize = tx
+        let num_tags: i64 = tx
             .query_one(
                 "SELECT count(1) FROM entry_tags WHERE entry = ?1",
                 [entry],
@@ -324,12 +308,14 @@ impl App {
 
         let mut removed = 0;
         for tag in tags {
-            removed += tx
-                .execute(
+            removed += i64::try_from(
+                tx.execute(
                     "DELETE FROM entry_tags WHERE entry = ?1 AND tag = ?2",
                     (entry, tag),
                 )
-                .map_err(ProgramError::RusqliteError)?;
+                .map_err(ProgramError::RusqliteError)?,
+            )
+            .unwrap();
         }
 
         if tags.is_empty() || removed == num_tags {
@@ -381,7 +367,7 @@ impl App {
     }
 
     /// Returns (number of entries, number of tags)
-    pub fn stats(&self) -> Result<(usize, usize), ProgramError> {
+    pub fn stats(&self) -> Result<(i64, i64), ProgramError> {
         let entries = self
             .conn
             .prepare("SELECT count(1) FROM entries")
@@ -406,7 +392,7 @@ impl App {
         entries: impl Iterator<Item = String>,
         tags: &[Tag],
         confirm: Confirm,
-    ) -> Result<(usize, usize, usize), ProgramError> {
+    ) -> Result<(i64, i64, i64), ProgramError> {
         if tags.is_empty() {
             return Ok((0, 0, 0));
         }
@@ -420,22 +406,28 @@ impl App {
         let mut added = 0;
         let mut files = 0;
         for tag in tags {
-            created += tx
-                .execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
-                .map_err(ProgramError::RusqliteError)?;
+            created += i64::try_from(
+                tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
+                    .map_err(ProgramError::RusqliteError)?,
+            )
+            .unwrap();
         }
 
         for entry in entries {
-            files += tx
-                .execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [&entry])
-                .map_err(ProgramError::RusqliteError)?;
+            files += i64::try_from(
+                tx.execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [&entry])
+                    .map_err(ProgramError::RusqliteError)?,
+            )
+            .unwrap();
             for tag in tags {
-                added += tx
-                    .execute(
+                added += i64::try_from(
+                    tx.execute(
                         "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
                         (&entry, tag),
                     )
-                    .map_err(ProgramError::RusqliteError)?;
+                    .map_err(ProgramError::RusqliteError)?,
+                )
+                .unwrap();
             }
         }
 
