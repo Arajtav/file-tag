@@ -29,4 +29,7 @@ pub enum ProgramError {
     /// Failed to get the database.
     #[error("failed to get the database")]
     NoDB,
+    /// Migration failed.
+    #[error("migration failed: {0}")]
+    MigrationError(#[from] rusqlite_migration::Error),
 }

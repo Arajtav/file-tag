@@ -1,6 +1,7 @@
 mod app;
 mod errors;
 mod finder;
+mod migrations;
 mod path;
 mod query_tag;
 mod tag;
