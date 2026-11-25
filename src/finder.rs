@@ -148,6 +148,6 @@ mod tests {
         let scanner = FileScanner::new(temp.path().to_path_buf());
         let files: Vec<PathBuf> = scanner.collect();
 
-        assert!(files.is_empty());
+        assert_eq!(files, [] as [std::path::PathBuf; 0]);
     }
 }

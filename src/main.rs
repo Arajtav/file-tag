@@ -75,6 +75,12 @@ enum Commands {
     Tag {
         /// File to tag.
         file: PathBuf,
+        /// Whether to tag directories recursively.
+        #[arg(short, long)]
+        recursive: bool,
+        /// Auto confirms directory tags.
+        #[arg(short, long)]
+        yes: bool,
         /// Tags to add.
         tags: Vec<Tag>,
     },
@@ -101,18 +107,6 @@ enum Commands {
     Untagged,
     /// Prints the database stats, like the number of files, tags, etc.
     Stats,
-    /// Tags every file in a directory, works recursively.
-    DirTag {
-        /// Directory to scan.
-        dir: PathBuf,
-
-        /// Tags to add.
-        tags: Vec<Tag>,
-
-        /// Skip confirmation prompt.
-        #[arg(short, long)]
-        yes: bool,
-    },
 }
 
 fn confirm() -> bool {
@@ -210,15 +204,41 @@ fn run() -> Result<(), ProgramError> {
                 println!("{tag}");
             }
         }
-        Commands::Tag { file, tags } => {
-            // if the file does not exist it will print that too.
-            if file.is_symlink() || !file.is_file() {
-                eprintln!("only files can be tagged");
+        Commands::Tag {
+            file,
+            tags,
+            recursive,
+            yes,
+        } => {
+            let (is_sym, is_file, is_dir) = (file.is_symlink(), file.is_file(), file.is_dir());
+
+            if is_sym {
+                eprintln!("symlinks cannot be tagged");
                 return Ok(());
             }
 
-            let (created, added) = db.tag_entry(&resolve_path(file)?, &tags)?;
-            println!("{created} tags created, {added} tags added");
+            if !(is_file || is_dir) {
+                eprintln!("special files cannot be tagged");
+                return Ok(());
+            }
+
+            if is_file {
+                let (created, added) = db.tag_entry(&resolve_path(file)?, &tags)?;
+                println!("{created} tags created, {added} tags added");
+                return Ok(());
+            }
+
+            if !recursive {
+                eprintln!("directories can only be tagged with `--recursive` flag");
+                return Ok(());
+            }
+
+            let fs = FileScanner::new(file);
+            db.tag_multiple(
+                fs.into_iter().filter_map(|f| resolve_path(f).ok()),
+                &tags,
+                if yes { always_confirm } else { confirm },
+            )?;
         }
         Commands::Untag { file, tags } => {
             let removed = db.untag_entry(&resolve_path(file)?, &tags)?;
@@ -255,14 +275,6 @@ fn run() -> Result<(), ProgramError> {
             let (entries, tags) = db.stats()?;
             println!("number of entries: {entries}");
             println!("number of tags: {tags}");
-        }
-        Commands::DirTag { dir, tags, yes } => {
-            let fs = FileScanner::new(dir);
-            db.tag_multiple(
-                fs.into_iter().filter_map(|f| resolve_path(f).ok()),
-                &tags,
-                if yes { always_confirm } else { confirm },
-            )?;
         }
     }
     Ok(())
