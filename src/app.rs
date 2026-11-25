@@ -261,6 +261,39 @@ impl App {
             })
     }
 
+    /// Returns tags and count of shared entries with `tag`.
+    pub fn tag_associated(
+        &self,
+        tag: &Tag,
+        limit: Option<i64>,
+    ) -> Result<Vec<(Tag, i64)>, ProgramError> {
+        self.conn
+            .prepare(
+                "
+                    SELECT et2.tag, COUNT(et2.entry) AS shared
+                    FROM entry_tags et1
+                    JOIN entry_tags et2 ON et2.entry = et1.entry
+                    WHERE et1.tag = ?1
+                        AND et2.tag != ?1
+                    GROUP BY et2.tag
+                    ORDER BY shared DESC, et2.tag ASC
+                    LIMIT ?2
+                ",
+            )
+            .map_err(ProgramError::RusqliteError)?
+            .query_map(rusqlite::params![tag, limit.unwrap_or(-1)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(ProgramError::RusqliteError)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)
+            .map(|v| {
+                v.into_iter()
+                    .map(|(name, count)| (Tag::new_unchecked(name), count))
+                    .collect()
+            })
+    }
+
     /// Returns whether the file is in the database.
     pub fn is_in_db(&self, path: &str) -> Result<bool, ProgramError> {
         Ok(self

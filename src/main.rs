@@ -131,6 +131,14 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Returns tags that appear on the same entries as `tag`, with their count.
+    Associated {
+        /// The tag.
+        tag: Tag,
+        /// Prints up to this many tags.
+        #[arg(short, long)]
+        limit: Option<u64>,
+    },
 }
 
 fn confirm() -> bool {
@@ -322,6 +330,12 @@ fn run() -> Result<(), ProgramError> {
                 &tags,
                 if yes { always_confirm } else { confirm },
             )?;
+        }
+        Commands::Associated { tag, limit } => {
+            let associated = db.tag_associated(&tag, limit.and_then(|v| i64::try_from(v).ok()))?;
+            for (tag, count) in associated {
+                println!("{count}\t{tag}");
+            }
         }
     }
     Ok(())
