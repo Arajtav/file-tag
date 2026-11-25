@@ -1,14 +1,22 @@
-use std::path::{PathBuf, absolute};
+use std::path::{Path, PathBuf, absolute};
 
 use crate::errors::ProgramError;
 
 /// Tries to resolve a path, canonicalize, etc.
-pub fn resolve_path(path: PathBuf) -> Result<String, ProgramError> {
+pub fn resolve_path(path: PathBuf, root: Option<&Path>) -> Result<String, ProgramError> {
     let Ok(resolved) = path.canonicalize().or_else(|_| absolute(&path)) else {
         return Err(ProgramError::InvalidPath(path));
     };
 
-    resolved
+    let stored = match root {
+        Some(root) => resolved
+            .strip_prefix(root)
+            .map_err(|_| ProgramError::OutsideDb(resolved.clone(), root.to_owned()))?
+            .to_path_buf(),
+        None => resolved,
+    };
+
+    stored
         .into_os_string()
         .into_string()
         .map_err(|_| ProgramError::InvalidPath(path))
@@ -32,8 +40,8 @@ mod tests {
         let p1 = dir.child("../dir").path().to_path_buf();
         let p2 = dir.path().to_path_buf();
 
-        let r1 = resolve_path(p1).unwrap();
-        let r2 = resolve_path(p2).unwrap();
+        let r1 = resolve_path(p1, None).unwrap();
+        let r2 = resolve_path(p2, None).unwrap();
 
         assert_eq!(Path::new(&r1), Path::new(&r2));
     }
@@ -48,7 +56,7 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
 
-        let resolved = resolve_path(path.clone()).unwrap();
+        let resolved = resolve_path(path.clone(), None).unwrap();
 
         assert_eq!(
             resolved,
@@ -67,9 +75,34 @@ mod tests {
         let p1 = nested.path().join("../../b/./c");
         let p2 = nested.path().to_path_buf();
 
-        let r1 = resolve_path(p1).unwrap();
-        let r2 = resolve_path(p2).unwrap();
+        let r1 = resolve_path(p1, None).unwrap();
+        let r2 = resolve_path(p2, None).unwrap();
 
         assert_eq!(Path::new(&r1), Path::new(&r2));
+    }
+
+    #[test]
+    fn local_db_paths_are_relative() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let file = temp.child("a/b.txt");
+        file.touch().unwrap();
+
+        let r = resolve_path(file.path().to_path_buf(), Some(&root)).unwrap();
+        assert_eq!(Path::new(&r), Path::new("a/b.txt"));
+    }
+
+    #[test]
+    fn outside_local_db_is_error() {
+        let db_dir = TempDir::new().unwrap();
+        let other = TempDir::new().unwrap();
+        let file = other.child("x.txt");
+        file.touch().unwrap();
+
+        let root = db_dir.path().canonicalize().unwrap();
+        assert!(matches!(
+            resolve_path(file.path().to_path_buf(), Some(&root)),
+            Err(ProgramError::OutsideDb(..))
+        ));
     }
 }

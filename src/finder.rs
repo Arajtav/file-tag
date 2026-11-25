@@ -5,7 +5,7 @@ use directories::ProjectDirs;
 use crate::errors::ProgramError;
 
 /// Tries to find user's state dir.
-pub fn find_user_state_dir() -> Option<PathBuf> {
+fn find_user_state_dir() -> Option<PathBuf> {
     let project = ProjectDirs::from("com", "arajtav", "file-tag")?;
     let state = project
         .state_dir()
@@ -16,19 +16,53 @@ pub fn find_user_state_dir() -> Option<PathBuf> {
     Some(state.to_owned())
 }
 
+/// Database location and the information needed to later normalize file paths.
+pub struct DbLocation {
+    pub path: PathBuf,
+    pub root: Option<PathBuf>,
+}
+
+impl std::fmt::Display for DbLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.root {
+            Some(root) => writeln!(
+                f,
+                "{} (local, root at {})",
+                self.path.display(),
+                root.display()
+            ),
+            None => writeln!(f, "{} (global)", self.path.display()),
+        }
+    }
+}
+
+impl DbLocation {
+    pub fn recreate(&self, entry: &str) -> PathBuf {
+        match &self.root {
+            Some(root) => root.join(entry),
+            None => PathBuf::from(entry),
+        }
+    }
+}
+
 /// Tries to find a database to use.
-pub fn find_db() -> Result<PathBuf, ProgramError> {
-    if let Some(db) = std::env::current_dir()
-        .expect("Failed to get cwd") // not ProgramError
+pub fn find_db() -> Result<DbLocation, ProgramError> {
+    // not ProgramError
+    let cwd = std::env::current_dir().expect("Failed to get cwd");
+
+    if let Some(dir) = cwd
         .ancestors()
-        .map(|p| p.join("file-tag.sqlite"))
-        .find(|p| p.exists())
+        .find(|dir| dir.join("file-tag.sqlite").exists())
     {
-        Ok(db)
+        let root = dir.canonicalize().map_err(|_| ProgramError::NoDB)?;
+        Ok(DbLocation {
+            path: root.join("file-tag.sqlite"),
+            root: Some(root),
+        })
     } else {
-        let mut db = find_user_state_dir().ok_or(ProgramError::NoDB)?;
-        db.push("db.sqlite");
-        Ok(db)
+        let mut path = find_user_state_dir().ok_or(ProgramError::NoDB)?;
+        path.push("db.sqlite");
+        Ok(DbLocation { path, root: None })
     }
 }
 

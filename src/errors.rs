@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::tag::Tag;
@@ -32,4 +34,7 @@ pub enum ProgramError {
     /// Migration failed.
     #[error("migration failed: {0}")]
     MigrationError(#[from] rusqlite_migration::Error),
+    /// The path is outside the database directory.
+    #[error("outside the database directory ({0}, the database is at {1})")]
+    OutsideDb(PathBuf, PathBuf),
 }

@@ -159,24 +159,24 @@ fn run() -> Result<(), ProgramError> {
         return App::new(&PathBuf::from("file-tag.sqlite")).map(|_| ());
     }
 
-    let db = find_db()?;
+    let location = find_db()?;
 
     match args.command {
         Commands::Database => {
-            println!("{}", db.display());
+            println!("{location}");
             return Ok(());
         }
         Commands::Backup => {
-            if std::fs::exists(&db).is_ok_and(|a| a) {
+            if std::fs::exists(&location.path).is_ok_and(|a| a) {
                 let time = chrono::Utc::now();
 
-                let new = db.with_file_name(format!(
+                let new = location.path.with_file_name(format!(
                     "{}-{}.sqlite",
-                    db.file_stem().unwrap().to_string_lossy(),
+                    location.path.file_stem().unwrap().to_string_lossy(),
                     time.to_rfc3339()
                 ));
 
-                match std::fs::copy(db, &new) {
+                match std::fs::copy(location.path, &new) {
                     Ok(_) => println!("Backup of the database created at {}", new.display()),
                     Err(_) => eprintln!("Failed to create a backup"),
                 }
@@ -189,7 +189,7 @@ fn run() -> Result<(), ProgramError> {
         _ => {}
     }
 
-    let mut db = App::new(&db)?;
+    let mut db = App::new(&location.path)?;
     match args.command {
         Commands::InitLocal | Commands::Database | Commands::Backup => unreachable!(),
         Commands::Create { tag } => {
@@ -235,7 +235,9 @@ fn run() -> Result<(), ProgramError> {
             sort,
             reverse,
         } => {
-            let file = file.map(resolve_path).transpose()?;
+            let file = file
+                .map(|f| resolve_path(f, location.root.as_deref()))
+                .transpose()?;
 
             if count || sort == TagSort::Count {
                 let mut rows = db.tags_counted(file.as_deref())?;
@@ -284,11 +286,12 @@ fn run() -> Result<(), ProgramError> {
                 return Ok(());
             }
 
-            let (created, added) = db.tag_entry(&resolve_path(file)?, &tags)?;
+            let (created, added) =
+                db.tag_entry(&resolve_path(file, location.root.as_deref())?, &tags)?;
             println!("{created} tags created, {added} tags added");
         }
         Commands::Untag { file, tags } => {
-            let removed = db.untag_entry(&resolve_path(file)?, &tags)?;
+            let removed = db.untag_entry(&resolve_path(file, location.root.as_deref())?, &tags)?;
             println!("{removed} tags removed");
         }
         Commands::Query { query_tags } => {
@@ -303,18 +306,18 @@ fn run() -> Result<(), ProgramError> {
 
             let mut results = db.query(&required, &forbidden)?;
             results.sort_unstable();
-            for tag in results {
-                println!("{tag}");
+            for file in results {
+                println!("{}", location.recreate(&file).display());
             }
         }
         Commands::Untagged => {
             let fs = FileScanner::new(std::env::current_dir().expect("Failed to get cwd"));
             for file in fs {
-                let file =
-                    resolve_path(file.clone()).unwrap_or(file.to_string_lossy().into_owned());
+                let file = resolve_path(file.clone(), location.root.as_deref())
+                    .unwrap_or(file.to_string_lossy().into_owned());
 
                 if !db.is_in_db(&file)? {
-                    println!("{file}");
+                    println!("{}", location.recreate(&file).display());
                 }
             }
         }
@@ -326,7 +329,8 @@ fn run() -> Result<(), ProgramError> {
         Commands::DirTag { dir, tags, yes } => {
             let fs = FileScanner::new(dir);
             db.tag_multiple(
-                fs.into_iter().filter_map(|f| resolve_path(f).ok()),
+                fs.into_iter()
+                    .filter_map(|f| resolve_path(f, location.root.as_deref()).ok()),
                 &tags,
                 if yes { always_confirm } else { confirm },
             )?;
