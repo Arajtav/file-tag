@@ -220,25 +220,45 @@ impl App {
 
     /// Returns the list of tags.
     pub fn tags(&self, entry: Option<&str>) -> Result<Vec<Tag>, ProgramError> {
-        Ok(match entry {
-            Some(entry) => self
-                .conn
-                .prepare("SELECT tag FROM entry_tags WHERE entry = ?1")
-                .map_err(ProgramError::RusqliteError)?
-                .query_map([entry], |row| row.get(0))
-                .map_err(ProgramError::RusqliteError)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(ProgramError::RusqliteError)?,
-            None => self
-                .conn
-                .prepare("SELECT name FROM tags")
-                .map_err(ProgramError::RusqliteError)?
-                .query_map([], |row| row.get(0))
-                .map_err(ProgramError::RusqliteError)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(ProgramError::RusqliteError)?,
-        })
-        .map(|v| v.into_iter().map(Tag::new_unchecked).collect())
+        self.conn
+            .prepare(
+                "SELECT name FROM tags
+                 WHERE ?1 IS NULL
+                    OR name IN (SELECT tag FROM entry_tags WHERE entry = ?1)",
+            )
+            .map_err(ProgramError::RusqliteError)?
+            .query_map([entry], |row| row.get::<_, String>(0))
+            .map_err(ProgramError::RusqliteError)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)
+            .map(|v| v.into_iter().map(Tag::new_unchecked).collect())
+    }
+
+    /// Like `tags` but the number of times each tag is used is returned along the tag.
+    pub fn tags_counted(&self, entry: Option<&str>) -> Result<Vec<(Tag, i64)>, ProgramError> {
+        self.conn
+            .prepare(
+                "
+                    SELECT t.name, COUNT(et.entry)
+                    FROM tags t
+                    LEFT JOIN entry_tags et ON et.tag = t.name
+                    WHERE ?1 IS NULL
+                    OR t.name IN (SELECT tag FROM entry_tags WHERE entry = ?1)
+                    GROUP BY t.name
+                 ",
+            )
+            .map_err(ProgramError::RusqliteError)?
+            .query_map([entry], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(ProgramError::RusqliteError)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)
+            .map(|v| {
+                v.into_iter()
+                    .map(|(name, count)| (Tag::new_unchecked(name), count))
+                    .collect()
+            })
     }
 
     /// Returns whether the file is in the database.

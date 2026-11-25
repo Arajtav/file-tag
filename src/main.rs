@@ -8,7 +8,8 @@ mod tag;
 
 use std::{path::PathBuf, process::exit};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use itertools::Either;
 
 use crate::{
     app::App,
@@ -18,6 +19,14 @@ use crate::{
     query_tag::QueryTag,
     tag::Tag,
 };
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum TagSort {
+    /// Sort alphabetically
+    Name,
+    /// Sort by the number of files using the tag
+    Count,
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -70,6 +79,15 @@ enum Commands {
     Tags {
         /// Optionally file from which the tags will be listed.
         file: Option<PathBuf>,
+        /// Print the total number of files using each tag.
+        #[arg(short, long)]
+        count: bool,
+        /// Sort the output.
+        #[arg(short, long, default_value = "name")]
+        sort: TagSort,
+        /// Reverse the sort order.
+        #[arg(short, long)]
+        reverse: bool,
     },
     /// Tags a file.
     Tag {
@@ -203,11 +221,52 @@ fn run() -> Result<(), ProgramError> {
                 new_tag.as_ref().unwrap_or(&tag_a)
             );
         }
-        Commands::Tags { file } => {
-            let mut tags = db.tags(file.map(resolve_path).transpose()?.as_deref())?;
-            tags.sort_unstable();
-            for tag in tags {
-                println!("{tag}");
+        Commands::Tags {
+            file,
+            count,
+            sort,
+            reverse,
+        } => {
+            let file = file.map(resolve_path).transpose()?;
+
+            if count || sort == TagSort::Count {
+                let mut rows = db.tags_counted(file.as_deref())?;
+
+                match sort {
+                    // The name is first in the tuple.
+                    TagSort::Name => rows.sort_unstable(),
+                    TagSort::Count => {
+                        rows.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                    }
+                }
+
+                let rows = if reverse {
+                    Either::Left(rows.into_iter().rev())
+                } else {
+                    Either::Right(rows.into_iter())
+                };
+
+                for (tag, n) in rows {
+                    if count {
+                        println!("{n}\t{tag}");
+                    } else {
+                        println!("{tag}");
+                    }
+                }
+            } else {
+                let mut tags = db.tags(file.as_deref())?;
+
+                tags.sort_unstable();
+
+                let tags = if reverse {
+                    Either::Left(tags.into_iter().rev())
+                } else {
+                    Either::Right(tags.into_iter())
+                };
+
+                for tag in tags {
+                    println!("{tag}");
+                }
             }
         }
         Commands::Tag { file, tags } => {
