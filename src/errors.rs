@@ -16,11 +16,14 @@ pub enum ProgramError {
     /// Disallowed tag name.
     #[error("invalid tag name {0:?}")]
     InvalidTagName(String),
-    /// Tried to overwrite a tag.
-    #[error("tag {0} already exists")]
+    /// There is already an alias of this name.
+    #[error("there already is an alias named {0}")]
+    AliasExists(Tag),
+    /// There is already a tag of this name.
+    #[error("there already is a tag named {0}")]
     TagExists(Tag),
     /// Tried to do an operation on inexistent tag.
-    #[error("tag {0} doesn not exist")]
+    #[error("tag {0} doesn't not exist")]
     TagNotFound(Tag),
     /// Tried to merge a tag with itself.
     #[error("cannot merge {0} with itself")]

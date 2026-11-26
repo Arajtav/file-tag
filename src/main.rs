@@ -139,6 +139,23 @@ enum Commands {
         #[arg(short, long)]
         limit: Option<u64>,
     },
+    /// Creates a tag mapping.
+    CreateAlias {
+        /// The tag to map to.
+        tag: Tag,
+        /// The alias.
+        alias: Tag,
+    },
+    /// Removes a tag mapping.
+    RemoveAlias {
+        /// The alias to remove.
+        alias: Tag,
+    },
+    /// Lists all tag mappings.
+    Aliases {
+        /// The tags aliases of which to list.
+        tag: Option<Tag>,
+    },
 }
 
 fn confirm() -> bool {
@@ -322,9 +339,10 @@ fn run() -> Result<(), ProgramError> {
             }
         }
         Commands::Stats => {
-            let (entries, tags) = db.stats()?;
+            let (entries, tags, aliases) = db.stats()?;
             println!("number of entries: {entries}");
             println!("number of tags: {tags}");
+            println!("number of aliases: {aliases}");
         }
         Commands::DirTag { dir, tags, yes } => {
             let fs = FileScanner::new(dir);
@@ -339,6 +357,20 @@ fn run() -> Result<(), ProgramError> {
             let associated = db.tag_associated(&tag, limit.and_then(|v| i64::try_from(v).ok()))?;
             for (tag, count) in associated {
                 println!("{count}\t{tag}");
+            }
+        }
+        Commands::CreateAlias { tag, alias } => {
+            db.create_alias(&tag, &alias)?;
+            println!("Created alias {alias}");
+        }
+        Commands::RemoveAlias { alias } => {
+            db.remove_alias(&alias)?;
+            println!("Removed alias {alias}");
+        }
+        Commands::Aliases { tag } => {
+            let aliases = db.aliases(tag.as_ref())?;
+            for (alias, tag) in aliases {
+                println!("{alias}\t{tag}");
             }
         }
     }

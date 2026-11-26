@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 use crate::{errors::ProgramError, migrations::MIGRATIONS, tag::Tag};
 
@@ -16,8 +16,7 @@ pub type Confirm = fn() -> bool;
 
 impl App {
     fn init_db(conn: &mut Connection) -> Result<(), ProgramError> {
-        conn.pragma_update(None, "foreign_keys", "ON")
-            .map_err(ProgramError::RusqliteError)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
 
         MIGRATIONS
             .to_latest(conn)
@@ -27,7 +26,7 @@ impl App {
     /// Opens a database connection from `db_path`.
     /// Creates and initializes a new database if needed.
     pub fn new(db_path: &Path) -> Result<Self, ProgramError> {
-        let mut conn = Connection::open(db_path).map_err(ProgramError::RusqliteError)?;
+        let mut conn = Connection::open(db_path)?;
         Self::init_db(&mut conn)?;
         Ok(Self { conn })
     }
@@ -35,56 +34,98 @@ impl App {
     /// Opens a database connection in memory.
     #[cfg(test)]
     pub fn new_in_memory() -> Result<Self, ProgramError> {
-        let mut conn = Connection::open_in_memory().map_err(ProgramError::RusqliteError)?;
+        let mut conn = Connection::open_in_memory()?;
         Self::init_db(&mut conn)?;
         Ok(Self { conn })
     }
 
-    /// Counts how many files is the `tag` on.
-    fn count_uses(tx: &Transaction, tag: &Tag) -> Result<i64, ProgramError> {
-        let tag_exists: bool = tx
-            .prepare("SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)")
-            .map_err(ProgramError::RusqliteError)?
-            .query_row([tag], |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?;
+    /// Resolves tag aliases, returns the original tag if there is no alias.
+    fn resolve(conn: &Connection, tag: &Tag) -> Result<Tag, ProgramError> {
+        conn.query_row(
+            "SELECT COALESCE((SELECT tag FROM aliases WHERE alias = ?1), ?1)",
+            [tag],
+            |row| row.get::<_, String>(0),
+        )
+        .map(Tag::new_unchecked)
+        .map_err(ProgramError::RusqliteError)
+    }
 
-        if !tag_exists {
+    /// Resolves and deduplicates all tags.
+    fn resolve_all(conn: &Connection, tags: &[Tag]) -> Result<Vec<Tag>, ProgramError> {
+        let mut out: Vec<Tag> = Vec::new();
+        for tag in tags {
+            let resolved = App::resolve(conn, tag)?;
+            if !out.contains(&resolved) {
+                out.push(resolved);
+            }
+        }
+        Ok(out)
+    }
+
+    fn tag_exists(conn: &Connection, tag: &Tag) -> Result<bool, ProgramError> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
+            [tag],
+            |row| row.get(0),
+        )
+        .map_err(ProgramError::RusqliteError)
+    }
+
+    fn alias_exists(conn: &Connection, alias: &Tag) -> Result<bool, ProgramError> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM aliases WHERE alias = ?1)",
+            [alias],
+            |row| row.get(0),
+        )
+        .map_err(ProgramError::RusqliteError)
+    }
+
+    /// Counts how many files is the `tag` on.
+    fn count_uses(conn: &Connection, tag: &Tag) -> Result<i64, ProgramError> {
+        if !Self::tag_exists(conn, tag)? {
             return Err(ProgramError::TagNotFound(tag.to_owned()));
         }
 
-        let count = tx
-            .prepare("SELECT COUNT(*) FROM entry_tags WHERE tag = ?1")
-            .map_err(ProgramError::RusqliteError)?
+        conn.prepare("SELECT COUNT(*) FROM entry_tags WHERE tag = ?1")?
             .query_row([tag], |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?;
-
-        Ok(count)
+            .map_err(ProgramError::RusqliteError)
     }
 
     /// Creates a new tag.
     /// Returns false if the tag already exists.
     pub fn create_tag(&mut self, tag: &Tag) -> Result<bool, ProgramError> {
-        Ok(self
+        let tx = self
             .conn
-            .execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
-            .map_err(ProgramError::RusqliteError)?
-            != 0)
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        if App::alias_exists(&tx, tag)? {
+            return Err(ProgramError::AliasExists(tag.clone()));
+        }
+
+        let created = tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])? != 0;
+
+        tx.commit()?;
+        Ok(created)
     }
 
     /// Removes an existing tag.
     pub fn remove_tag(&mut self, tag: &Tag, confirm: Confirm) -> Result<(), ProgramError> {
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         let files: Vec<String> = tx
-            .prepare("SELECT DISTINCT entry FROM entry_tags WHERE tag = ?1")
-            .map_err(ProgramError::RusqliteError)?
-            .query_map([tag], |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(ProgramError::RusqliteError)?;
+            .prepare("SELECT DISTINCT entry FROM entry_tags WHERE tag = ?1")?
+            .query_map([tag], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let aliases: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM aliases WHERE tag = ?1",
+            [tag],
+            |row| row.get(0),
+        )?;
+
+        println!("{aliases} aliases point to that tag");
 
         if !files.is_empty() {
             println!("{} files are tagged with that tag", files.len());
@@ -94,14 +135,13 @@ impl App {
             }
         }
 
-        tx.execute("DELETE FROM tags WHERE name = ?1", [tag])
-            .map_err(ProgramError::RusqliteError)?;
+        tx.execute("DELETE FROM tags WHERE name = ?1", [tag])?;
         for file in files {
             tx.execute("DELETE FROM entries WHERE path = ?1 AND NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry = ?1)", [file])
-                .map_err(ProgramError::RusqliteError)?;
+                ?;
         }
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -118,39 +158,27 @@ impl App {
 
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        if !tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
-                [old],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(ProgramError::RusqliteError)?
-        {
+        if !App::tag_exists(&tx, old)? {
             return Err(ProgramError::TagNotFound(old.to_owned()));
         }
 
-        if tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
-                [new],
-                |row| row.get(0),
-            )
-            .map_err(ProgramError::RusqliteError)?
-        {
-            return Err(ProgramError::TagNotFound(new.to_owned()));
+        if App::tag_exists(&tx, new)? {
+            return Err(ProgramError::TagExists(new.clone()));
+        }
+
+        if App::alias_exists(&tx, new)? {
+            return Err(ProgramError::AliasExists(new.clone()));
         }
 
         if !confirm() {
             return Err(ProgramError::UserCanceled);
         }
 
-        tx.execute("UPDATE tags SET name = ?1 WHERE name = ?2", [new, old])
-            .map_err(ProgramError::RusqliteError)?;
+        tx.execute("UPDATE tags SET name = ?1 WHERE name = ?2", [new, old])?;
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -163,38 +191,44 @@ impl App {
         new: Option<&Tag>,
         confirm: Confirm,
     ) -> Result<(), ProgramError> {
-        if tag_a == tag_b {
-            return Err(ProgramError::SelfMerge(tag_a.to_owned()));
-        }
-
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let tag_a = App::resolve(&tx, tag_a)?;
+        let tag_b = App::resolve(&tx, tag_b)?;
+
+        if tag_a == tag_b {
+            return Err(ProgramError::SelfMerge(tag_a));
+        }
+
+        for tag in [&tag_a, &tag_b] {
+            if !App::tag_exists(&tx, tag)? {
+                return Err(ProgramError::TagNotFound(tag.to_owned()));
+            }
+        }
+
+        if let Some(new) = new
+            && *new != tag_a
+            && *new != tag_b
+        {
+            if App::tag_exists(&tx, new)? {
+                return Err(ProgramError::TagExists(new.to_owned()));
+            }
+            if App::alias_exists(&tx, new)? {
+                return Err(ProgramError::AliasExists(new.to_owned()));
+            }
+        }
 
         println!(
             "{} files are tagged with {tag_a}",
-            App::count_uses(&tx, tag_a)?
+            App::count_uses(&tx, &tag_a)?
         );
 
         println!(
             "{} files are tagged with {tag_b}",
-            App::count_uses(&tx, tag_b)?
+            App::count_uses(&tx, &tag_b)?
         );
-
-        if let Some(new) = new
-            && new != tag_a
-            && new != tag_b
-            && tx
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
-                    [new],
-                    |row| row.get(0),
-                )
-                .map_err(ProgramError::RusqliteError)?
-        {
-            return Err(ProgramError::TagExists(new.to_owned()));
-        }
 
         if !confirm() {
             return Err(ProgramError::UserCanceled);
@@ -202,19 +236,21 @@ impl App {
 
         tx.execute(
             "UPDATE OR IGNORE entry_tags SET tag = ?1 WHERE tag = ?2",
-            [tag_a, tag_b],
-        )
-        .map_err(ProgramError::RusqliteError)?;
+            [&tag_a, &tag_b],
+        )?;
 
-        tx.execute("DELETE FROM tags WHERE name = ?1", [tag_b])
-            .map_err(ProgramError::RusqliteError)?;
+        tx.execute(
+            "UPDATE aliases SET tag = ?1 WHERE tag = ?2",
+            [&tag_a, &tag_b],
+        )?;
+
+        tx.execute("DELETE FROM tags WHERE name = ?1", [&tag_b])?;
 
         if let Some(new) = new {
-            tx.execute("UPDATE tags SET name = ?1 WHERE name = ?2", [new, tag_a])
-                .map_err(ProgramError::RusqliteError)?;
+            tx.execute("UPDATE tags SET name = ?1 WHERE name = ?2", [new, &tag_a])?;
         }
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -225,10 +261,8 @@ impl App {
                 "SELECT name FROM tags
                  WHERE ?1 IS NULL
                     OR name IN (SELECT tag FROM entry_tags WHERE entry = ?1)",
-            )
-            .map_err(ProgramError::RusqliteError)?
-            .query_map([entry], |row| row.get::<_, String>(0))
-            .map_err(ProgramError::RusqliteError)?
+            )?
+            .query_map([entry], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(ProgramError::RusqliteError)
             .map(|v| v.into_iter().map(Tag::new_unchecked).collect())
@@ -246,12 +280,10 @@ impl App {
                     OR t.name IN (SELECT tag FROM entry_tags WHERE entry = ?1)
                     GROUP BY t.name
                  ",
-            )
-            .map_err(ProgramError::RusqliteError)?
+            )?
             .query_map([entry], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(ProgramError::RusqliteError)?
+            })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(ProgramError::RusqliteError)
             .map(|v| {
@@ -267,6 +299,8 @@ impl App {
         tag: &Tag,
         limit: Option<i64>,
     ) -> Result<Vec<(Tag, i64)>, ProgramError> {
+        let tag = App::resolve(&self.conn, tag)?;
+
         self.conn
             .prepare(
                 "
@@ -279,12 +313,10 @@ impl App {
                     ORDER BY shared DESC, et2.tag ASC
                     LIMIT ?2
                 ",
-            )
-            .map_err(ProgramError::RusqliteError)?
+            )?
             .query_map(rusqlite::params![tag, limit.unwrap_or(-1)], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(ProgramError::RusqliteError)?
+            })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(ProgramError::RusqliteError)
             .map(|v| {
@@ -298,11 +330,9 @@ impl App {
     pub fn is_in_db(&self, path: &str) -> Result<bool, ProgramError> {
         Ok(self
             .conn
-            .prepare("SELECT 1 FROM entries WHERE path = ?1")
-            .map_err(ProgramError::RusqliteError)?
+            .prepare("SELECT 1 FROM entries WHERE path = ?1")?
             .query_row([path], |_| Ok(()))
-            .optional()
-            .map_err(ProgramError::RusqliteError)?
+            .optional()?
             .is_some())
     }
 
@@ -315,31 +345,26 @@ impl App {
 
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        tx.execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [entry])
-            .map_err(ProgramError::RusqliteError)?;
+        let tags = App::resolve_all(&tx, tags)?;
+
+        tx.execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [entry])?;
 
         let mut created = 0;
         let mut added = 0;
-        for tag in tags {
-            created += i64::try_from(
-                tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
-                    .map_err(ProgramError::RusqliteError)?,
-            )
-            .unwrap();
-            added += i64::try_from(
-                tx.execute(
-                    "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
-                    (entry, tag),
-                )
-                .map_err(ProgramError::RusqliteError)?,
-            )
+        for tag in &tags {
+            created +=
+                i64::try_from(tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])?)
+                    .unwrap();
+            added += i64::try_from(tx.execute(
+                "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
+                (entry, tag),
+            )?)
             .unwrap();
         }
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok((created, added))
     }
 
@@ -348,41 +373,39 @@ impl App {
     pub fn untag_entry(&mut self, entry: &str, tags: &[Tag]) -> Result<i64, ProgramError> {
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        let num_tags: i64 = tx
-            .query_one(
-                "SELECT count(1) FROM entry_tags WHERE entry = ?1",
-                [entry],
-                |row| row.get(0),
-            )
-            .map_err(ProgramError::RusqliteError)?;
+        let tags = App::resolve_all(&tx, tags)?;
+
+        let num_tags: i64 = tx.query_one(
+            "SELECT count(1) FROM entry_tags WHERE entry = ?1",
+            [entry],
+            |row| row.get(0),
+        )?;
 
         let mut removed = 0;
-        for tag in tags {
-            removed += i64::try_from(
-                tx.execute(
-                    "DELETE FROM entry_tags WHERE entry = ?1 AND tag = ?2",
-                    (entry, tag),
-                )
-                .map_err(ProgramError::RusqliteError)?,
-            )
+        for tag in &tags {
+            removed += i64::try_from(tx.execute(
+                "DELETE FROM entry_tags WHERE entry = ?1 AND tag = ?2",
+                (entry, tag),
+            )?)
             .unwrap();
         }
 
         if tags.is_empty() || removed == num_tags {
-            tx.execute("DELETE FROM entries WHERE path = ?1", [entry])
-                .map_err(ProgramError::RusqliteError)?;
+            tx.execute("DELETE FROM entries WHERE path = ?1", [entry])?;
             removed = num_tags;
         }
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok(removed)
     }
 
     /// Returns all entries with `required` tags, excluding those with `forbidden` tags.
     pub fn query(&self, required: &[Tag], forbidden: &[Tag]) -> Result<Vec<String>, ProgramError> {
+        let required = App::resolve_all(&self.conn, required)?;
+        let forbidden = App::resolve_all(&self.conn, forbidden)?;
+
         let mut sql = "SELECT entry FROM entry_tags GROUP BY entry".to_owned();
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
 
@@ -411,31 +434,30 @@ impl App {
         }
 
         self.conn
-            .prepare(&sql)
-            .map_err(ProgramError::RusqliteError)?
-            .query_map(params.as_slice(), |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?
+            .prepare(&sql)?
+            .query_map(params.as_slice(), |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(ProgramError::RusqliteError)
     }
 
-    /// Returns (number of entries, number of tags)
-    pub fn stats(&self) -> Result<(i64, i64), ProgramError> {
+    /// Returns (number of entries, number of tags, number of aliases)
+    pub fn stats(&self) -> Result<(i64, i64, i64), ProgramError> {
         let entries = self
             .conn
-            .prepare("SELECT count(1) FROM entries")
-            .map_err(ProgramError::RusqliteError)?
-            .query_one([], |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?;
+            .prepare("SELECT count(1) FROM entries")?
+            .query_one([], |row| row.get(0))?;
 
         let tags = self
             .conn
-            .prepare("SELECT count(1) FROM tags")
-            .map_err(ProgramError::RusqliteError)?
-            .query_one([], |row| row.get(0))
-            .map_err(ProgramError::RusqliteError)?;
+            .prepare("SELECT count(1) FROM tags")?
+            .query_one([], |row| row.get(0))?;
 
-        Ok((entries, tags))
+        let aliases = self
+            .conn
+            .prepare("SELECT count(1) FROM aliases")?
+            .query_one([], |row| row.get(0))?;
+
+        Ok((entries, tags, aliases))
     }
 
     /// Tags multiple files.
@@ -452,34 +474,29 @@ impl App {
 
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(ProgramError::RusqliteError)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let tags = App::resolve_all(&tx, tags)?;
 
         let mut created = 0;
         let mut added = 0;
         let mut files = 0;
-        for tag in tags {
-            created += i64::try_from(
-                tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])
-                    .map_err(ProgramError::RusqliteError)?,
-            )
-            .unwrap();
+        for tag in &tags {
+            created +=
+                i64::try_from(tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])?)
+                    .unwrap();
         }
 
         for entry in entries {
             files += i64::try_from(
-                tx.execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [&entry])
-                    .map_err(ProgramError::RusqliteError)?,
+                tx.execute("INSERT OR IGNORE INTO entries (path) VALUES (?1)", [&entry])?,
             )
             .unwrap();
-            for tag in tags {
-                added += i64::try_from(
-                    tx.execute(
-                        "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
-                        (&entry, tag),
-                    )
-                    .map_err(ProgramError::RusqliteError)?,
-                )
+            for tag in &tags {
+                added += i64::try_from(tx.execute(
+                    "INSERT OR IGNORE INTO entry_tags (entry, tag) VALUES (?1, ?2)",
+                    (&entry, tag),
+                )?)
                 .unwrap();
             }
         }
@@ -496,8 +513,63 @@ impl App {
             return Err(ProgramError::UserCanceled);
         }
 
-        tx.commit().map_err(ProgramError::RusqliteError)?;
+        tx.commit()?;
         Ok((created, added, files))
+    }
+
+    /// Returns a list of (alias, tag) pairs.
+    pub fn aliases(&self, tag: Option<&Tag>) -> Result<Vec<(Tag, Tag)>, ProgramError> {
+        self.conn
+            .prepare(
+                "SELECT alias, tag FROM aliases
+                 WHERE ?1 IS NULL
+                    OR tag = COALESCE((SELECT tag FROM aliases WHERE alias = ?1), ?1)",
+            )?
+            .query_map([tag], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProgramError::RusqliteError)
+            .map(|v| {
+                v.into_iter()
+                    .map(|(alias, tag)| (Tag::new_unchecked(alias), Tag::new_unchecked(tag)))
+                    .collect()
+            })
+    }
+
+    /// Creates an alias to a tag.
+    pub fn create_alias(&mut self, tag: &Tag, alias: &Tag) -> Result<(), ProgramError> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let tag = App::resolve(&tx, tag)?;
+
+        if !App::tag_exists(&tx, &tag)? {
+            return Err(ProgramError::TagNotFound(tag));
+        }
+        if App::tag_exists(&tx, alias)? {
+            return Err(ProgramError::TagExists(alias.to_owned()));
+        }
+        if App::alias_exists(&tx, alias)? {
+            return Err(ProgramError::AliasExists(alias.to_owned()));
+        }
+
+        tx.execute(
+            "INSERT INTO aliases (alias, tag) VALUES (?1, ?2)",
+            [alias, &tag],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes an alias.
+    pub fn remove_alias(&mut self, alias: &Tag) -> Result<bool, ProgramError> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM aliases WHERE alias = ?1", [alias])?
+            != 0)
     }
 }
 

@@ -25,6 +25,11 @@ Here are all the commands sorted by their usage.
 `tags` - lists all the tags in the database (or all the tags on some file).
 `associated` - lists all the tags that appear on the same entry as requested tag.
 
+--Aliasing--
+`create-alias` - creates a new alias or makes sure one exists.
+`remove-alias` - removes an alias or makes sure one doesn't exist.
+`aliases` - prints all aliases of a tag or in the database.
+
 --Tagging--
 
 `tag` - adds one or more tags to a file.
